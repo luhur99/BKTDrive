@@ -1,0 +1,80 @@
+version: '3.8'
+
+# LuhurWorkspace — Production Stack
+# Jalankan: docker-compose up -d
+# Setup DB: buka http://IP_VPS:8090/setup.php
+
+services:
+
+  # ── Aplikasi PHP ────────────────────────────────────────────────────────
+  app:
+    build: .
+    container_name: luhurworkspace_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8090}:80"
+    volumes:
+      - app_storage:/var/www/html/storage
+    environment:
+      DB_HOST:              db
+      DB_NAME:              ${DB_NAME:-luhurworkspace}
+      DB_USER:              ${DB_USER:-luhuruser}
+      DB_PASS:              ${DB_PASS}
+      APP_NAME:             ${APP_NAME:-LuhurWorkspace}
+      APP_URL:              ${APP_URL}
+      APP_INTERNAL_URL:     http://app/
+      ONLYOFFICE_ENABLED:   ${ONLYOFFICE_ENABLED:-true}
+      ONLYOFFICE_SERVER:    http://${SERVER_IP:-localhost}:8080
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - luhurnet
+
+  # ── MySQL Database ──────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: luhurworkspace_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE:      ${DB_NAME:-luhurworkspace}
+      MYSQL_USER:          ${DB_USER:-luhuruser}
+      MYSQL_PASSWORD:      ${DB_PASS}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASS}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - luhurnet
+
+  # ── OnlyOffice Document Server ──────────────────────────────────────────
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: luhurworkspace_office
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET:  ${ONLYOFFICE_JWT_SECRET}
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+    networks:
+      - luhurnet
+
+networks:
+  luhurnet:
+    driver: bridge
+
+volumes:
+  app_storage:
+  db_data:
+  onlyoffice_data:
+  onlyoffice_logs:

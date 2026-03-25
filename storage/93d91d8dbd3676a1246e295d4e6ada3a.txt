@@ -1,0 +1,19 @@
+'richdocuments' => array (
+  'wopi_url' => 'http://collabora-online:9980',
+  'disable_certificate_verification' => 'yes',
+  'public_wopi_url' => 'https://office.budikaryateknologi.com',
+),
+
+location / {
+    proxy_pass http://collabora-online:9980;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+docker network ls
+docker network inspect big-bear-nextcloud-ls
