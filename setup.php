@@ -3,12 +3,12 @@
  * Setup Wizard — Jalankan sekali untuk inisialisasi database.
  * Hapus file ini setelah setup selesai!
  */
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'bktdrive');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('APP_URL',  'http://localhost/BKTDrive');
-define('APP_NAME', 'BKTDrive');
+define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
+define('DB_NAME', getenv('DB_NAME') ?: 'bktdrive');
+define('DB_USER', getenv('DB_USER') ?: 'root');
+define('DB_PASS', getenv('DB_PASS') ?: '');
+define('APP_URL',  getenv('APP_URL')  ?: 'http://localhost:8090');
+define('APP_NAME', getenv('APP_NAME') ?: 'BKTDrive');
 
 $step    = $_GET['step']  ?? '1';
 $error   = '';

@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libcurl4-openssl-dev \
     libssl-dev \
+    libonig-dev \
     unzip \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -41,7 +42,7 @@ WORKDIR /var/www/html
 COPY . .
 
 # Hapus file sensitif yang tidak perlu ada di container
-RUN rm -f setup.php .env.example
+RUN rm -f .env.example
 
 # Buat folder storage dan set permission
 RUN mkdir -p storage \
@@ -49,4 +50,10 @@ RUN mkdir -p storage \
     && chmod -R 755 storage \
     && chown -R www-data:www-data /var/www/html
 
+# Entrypoint: inject env vars ke Apache sebelum start
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 80
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["apache2-foreground"]

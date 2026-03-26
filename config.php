@@ -1,25 +1,25 @@
 <?php
 // ============================================================
-// Konfigurasi LuhurWorkspace
+// Konfigurasi BKTDrive
 // ============================================================
 
-// Database — baca dari environment variable (Docker) atau fallback ke nilai lokal
+// Database — baca dari environment variable (Docker)
 define('DB_HOST', getenv('DB_HOST') ?: 'localhost');
-define('DB_NAME', getenv('DB_NAME') ?: 'luhurworkspace');
+define('DB_NAME', getenv('DB_NAME') ?: 'bktdrive');
 define('DB_USER', getenv('DB_USER') ?: 'root');
 define('DB_PASS', getenv('DB_PASS') ?: '');
 
 // Aplikasi
 define('APP_NAME', getenv('APP_NAME') ?: 'BKTDrive');
-define('APP_URL',  getenv('APP_URL')  ?: 'http://localhost/BKTDrive');
-define('APP_INTERNAL_URL', getenv('APP_INTERNAL_URL') ?: 'http://host.docker.internal/BKTDrive');
+define('APP_URL',  getenv('APP_URL')  ?: 'http://localhost:8090');
+define('APP_INTERNAL_URL', getenv('APP_INTERNAL_URL') ?: 'http://app');
 define('STORAGE_PATH', __DIR__ . '/storage');
 define('MAX_FILE_SIZE', (int)(getenv('MAX_FILE_SIZE') ?: 100) * 1024 * 1024);
 
 // OnlyOffice Document Server
-define('ONLYOFFICE_ENABLED',    filter_var(getenv('ONLYOFFICE_ENABLED')    ?: 'true',  FILTER_VALIDATE_BOOLEAN));
-define('ONLYOFFICE_SERVER',     getenv('ONLYOFFICE_SERVER')     ?: 'http://localhost:8080');
-define('ONLYOFFICE_JWT_SECRET', getenv('ONLYOFFICE_JWT_SECRET') ?: 'rahasia123ganti');
+define('ONLYOFFICE_ENABLED',    filter_var(getenv('ONLYOFFICE_ENABLED')    ?: 'true', FILTER_VALIDATE_BOOLEAN));
+define('ONLYOFFICE_SERVER',     getenv('ONLYOFFICE_SERVER')     ?: 'http://localhost:7400');
+define('ONLYOFFICE_JWT_SECRET', getenv('ONLYOFFICE_JWT_SECRET') ?: 'local-dev-secret');
 
 // Cron secret (untuk keamanan endpoint cron.php)
 define('CRON_SECRET', 'cron-' . md5(DB_NAME . DB_USER . APP_URL));

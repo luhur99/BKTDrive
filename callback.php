@@ -39,10 +39,11 @@ if (in_array($status, [2, 6])) {
         exit;
     }
 
-    // Download file dari OnlyOffice
-    $context = stream_context_create([
-        'http' => ['timeout' => 30],
-    ]);
+    // OnlyOffice generates URLs with its public hostname (e.g. http://localhost:7400)
+    // but from inside the PHP container we must use the Docker service name instead.
+    $downloadUrl = preg_replace('#^https?://[^/]+#', 'http://onlyoffice', $downloadUrl);
+
+    $context = stream_context_create(['http' => ['timeout' => 30]]);
     $content = @file_get_contents($downloadUrl, false, $context);
 
     if ($content === false) {

@@ -3,6 +3,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/ftp.php';
 
 requireLogin();
 
@@ -45,18 +46,10 @@ if (!$es) {
 }
 
 $ftpPass  = base64_decode($es['password']);
-$basePath = rtrim($es['base_path'], '/') ?: '/';
+$basePath = rtrim($es['base_path'], '/');          // '' when base_path is '/'
 $fullPath = $basePath . ($curPath === '/' ? '' : $curPath);
 if (!$fullPath) $fullPath = '/';
-
-// ── Helper: buka koneksi FTP ────────────────────────────────────────────────
-function ftpConnect(array $es, string $pass): mixed {
-    $conn = @ftp_connect($es['host'], $es['port'], 15);
-    if (!$conn) return false;
-    if (!@ftp_login($conn, $es['username'], $pass)) { ftp_close($conn); return false; }
-    if ($es['passive']) ftp_pasv($conn, true);
-    return $conn;
-}
+$fullPath = preg_replace('#/+#', '/', $fullPath);  // collapse any double-slashes
 
 $error   = '';
 $success = '';
@@ -69,120 +62,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'mkdir') {
         $folderName = preg_replace('/[\/\\\:\*\?"<>\|]/', '', trim($_POST['name'] ?? ''));
         if ($folderName) {
-            $conn = ftpConnect($es, $ftpPass);
-            if ($conn) {
-                $newDir = $fullPath . '/' . $folderName;
-                if (@ftp_mkdir($conn, $newDir)) {
-                    $success = 'Folder "' . $folderName . '" berhasil dibuat.';
-                } else {
-                    $error = 'Gagal membuat folder. Mungkin sudah ada atau tidak ada izin.';
-                }
-                ftp_close($conn);
-            } else {
-                $error = 'Gagal terhubung ke storage.';
-            }
+            $newDir = $fullPath . '/' . $folderName;
+            $ok = ftpRetry($es, $ftpPass, fn($conn) => @ftp_mkdir($conn, $newDir));
+            $success = $ok !== false
+                ? 'Folder "' . $folderName . '" berhasil dibuat.'
+                : ($error = 'Gagal membuat folder. Mungkin sudah ada atau tidak ada izin.');
         }
 
     } elseif ($action === 'upload') {
-        $conn = ftpConnect($es, $ftpPass);
-        if ($conn && !empty($_FILES['file']['tmp_name'])) {
+        if (!empty($_FILES['file']['tmp_name'])) {
             foreach ($_FILES['file']['tmp_name'] as $i => $tmp) {
                 if (!is_uploaded_file($tmp)) continue;
-                $origName = basename($_FILES['file']['name'][$i]);
-                $origName = preg_replace('/[\/\\\:\*\?"<>\|]/', '_', $origName);
+                $origName   = preg_replace('/[\/\\\:\*\?"<>\|]/', '_', basename($_FILES['file']['name'][$i]));
                 $remotePath = $fullPath . '/' . $origName;
-                if (@ftp_put($conn, $remotePath, $tmp, FTP_BINARY)) {
-                    $success = 'File berhasil diupload.';
-                } else {
-                    $error = 'Gagal upload "' . $origName . '".';
-                }
+                $ok = ftpRetry($es, $ftpPass, fn($conn) => @ftp_put($conn, $remotePath, $tmp, FTP_BINARY));
+                if ($ok !== false) $success = 'File berhasil diupload.';
+                else               $error   = 'Gagal upload "' . $origName . '".';
             }
-            ftp_close($conn);
         } else {
-            $error = 'Gagal terhubung atau tidak ada file yang dipilih.';
+            $error = 'Tidak ada file yang dipilih.';
         }
 
     } elseif ($action === 'delete') {
-        $target = $_POST['target'] ?? '';
-        $type   = $_POST['ftype']  ?? 'file';
+        $target = basename($_POST['target'] ?? '');
+        $type   = $_POST['ftype'] ?? 'file';
         if ($target) {
-            $conn = ftpConnect($es, $ftpPass);
-            if ($conn) {
-                $remotePath = $fullPath . '/' . basename($target);
-                if ($type === 'dir') {
-                    @ftp_rmdir($conn, $remotePath);
-                } else {
-                    @ftp_delete($conn, $remotePath);
-                }
-                ftp_close($conn);
-                $success = '"' . basename($target) . '" berhasil dihapus.';
-            }
+            $remotePath = $fullPath . '/' . $target;
+            ftpRetry($es, $ftpPass, function($conn) use ($remotePath, $type) {
+                return $type === 'dir' ? @ftp_rmdir($conn, $remotePath) : @ftp_delete($conn, $remotePath);
+            });
+            $success = '"' . $target . '" berhasil dihapus.';
         }
 
     } elseif ($action === 'rename') {
         $oldName = basename($_POST['old_name'] ?? '');
         $newName = preg_replace('/[\/\\\:\*\?"<>\|]/', '', trim($_POST['new_name'] ?? ''));
         if ($oldName && $newName) {
-            $conn = ftpConnect($es, $ftpPass);
-            if ($conn) {
-                @ftp_rename($conn, $fullPath . '/' . $oldName, $fullPath . '/' . $newName);
-                ftp_close($conn);
-                $success = 'Berhasil diganti nama.';
-            }
+            ftpRetry($es, $ftpPass, fn($conn) =>
+                @ftp_rename($conn, $fullPath . '/' . $oldName, $fullPath . '/' . $newName));
+            $success = 'Berhasil diganti nama.';
         }
     }
+}
+
+// ── View file inline (gambar, PDF, teks) ───────────────────────────────────
+if (isset($_GET['view'])) {
+    $target = basename($_GET['view']);
+    $tmp    = tempnam(sys_get_temp_dir(), 'ext_');
+    $remotePath = $fullPath . '/' . $target;
+    $ok = ftpRetry($es, $ftpPass, fn($conn) => @ftp_get($conn, $tmp, $remotePath, FTP_BINARY));
+    if ($ok !== false) {
+        $ext     = strtolower(pathinfo($target, PATHINFO_EXTENSION));
+        $mimeMap = [
+            'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png',
+            'gif' => 'image/gif',  'webp' => 'image/webp', 'svg' => 'image/svg+xml',
+            'bmp' => 'image/bmp',  'pdf'  => 'application/pdf',
+            'txt' => 'text/plain', 'log'  => 'text/plain', 'md' => 'text/plain',
+            'csv' => 'text/csv',   'json' => 'application/json', 'xml' => 'text/xml',
+        ];
+        header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
+        header('Content-Disposition: inline; filename="' . rawurlencode($target) . '"');
+        header('Content-Length: ' . filesize($tmp));
+        readfile($tmp); unlink($tmp); exit;
+    }
+    @unlink($tmp);
+    die('Gagal membuka file.');
 }
 
 // ── Download file ──────────────────────────────────────────────────────────
 if (isset($_GET['download'])) {
     $target = basename($_GET['download']);
-    $conn   = ftpConnect($es, $ftpPass);
-    if ($conn) {
-        $tmp = tempnam(sys_get_temp_dir(), 'ext_');
-        if (@ftp_get($conn, $tmp, $fullPath . '/' . $target, FTP_BINARY)) {
-            ftp_close($conn);
-            header('Content-Type: application/octet-stream');
-            header('Content-Disposition: attachment; filename="' . rawurlencode($target) . '"');
-            header('Content-Length: ' . filesize($tmp));
-            readfile($tmp);
-            unlink($tmp);
-            exit;
-        }
-        ftp_close($conn);
-        unlink($tmp);
+    $tmp    = tempnam(sys_get_temp_dir(), 'ext_');
+    $remotePath = $fullPath . '/' . $target;
+    $ok = ftpRetry($es, $ftpPass, fn($conn) => @ftp_get($conn, $tmp, $remotePath, FTP_BINARY));
+    if ($ok !== false) {
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . rawurlencode($target) . '"');
+        header('Content-Length: ' . filesize($tmp));
+        readfile($tmp); unlink($tmp); exit;
     }
+    @unlink($tmp);
     die('Gagal mendownload file.');
 }
 
 // ── Daftar file/folder ─────────────────────────────────────────────────────
-$items  = [];
-$conn   = ftpConnect($es, $ftpPass);
-$connOk = (bool)$conn;
+$listed = ftpListDir($es, $ftpPass, $fullPath);
+$connOk = ($listed !== false);
+$items  = $connOk ? $listed : [];
 
-if ($conn) {
-    $rawList = @ftp_rawlist($conn, $fullPath);
-    ftp_close($conn);
-
-    if ($rawList) {
-        foreach ($rawList as $line) {
-            if (!$line) continue;
-            // Parse format: drwxr-xr-x  2 user group 4096 Jan  1 12:00 filename
-            $parts = preg_split('/\s+/', $line, 9);
-            if (count($parts) < 9) continue;
-            $name = $parts[8];
-            if ($name === '.' || $name === '..') continue;
-            $isDir = $parts[0][0] === 'd';
-            $size  = (int)$parts[4];
-            $items[] = [
-                'name'  => $name,
-                'is_dir'=> $isDir,
-                'size'  => $size,
-                'raw'   => $line,
-            ];
-        }
-        // Sort: folder dulu, lalu file
-        usort($items, fn($a,$b) => $b['is_dir'] <=> $a['is_dir'] ?: strcmp($a['name'],$b['name']));
-    }
+if ($connOk) {
+    usort($items, fn($a,$b) => $b['is_dir'] <=> $a['is_dir'] ?: strcmp($a['name'],$b['name']));
 }
 
 // ── Breadcrumb dari path ───────────────────────────────────────────────────
@@ -372,6 +341,18 @@ $allStorages = $db->query('SELECT * FROM external_storages WHERE enabled=1 ORDER
                 <div class="file-name" title="<?= h($item['name']) ?>"><?= h($item['name']) ?></div>
                 <div class="file-meta"><?= formatSize($item['size']) ?></div>
                 <div class="file-actions">
+                    <?php if (isViewableFile($item['name'])): ?>
+                    <a href="?storage=<?= $storageId ?>&path=<?= urlencode($curPath) ?>&view=<?= $encName ?>"
+                       class="btn btn-sm btn-light" title="Lihat" target="_blank">
+                        <i class="fa-solid fa-eye"></i>
+                    </a>
+                    <?php endif; ?>
+                    <?php if (isOfficeFile($item['name']) && ONLYOFFICE_ENABLED): ?>
+                    <a href="<?= APP_URL ?>/ext_editor.php?storage=<?= $storageId ?>&path=<?= urlencode(rtrim($fullPath,'/').'/'.$item['name']) ?>"
+                       class="btn btn-sm btn-primary" title="Edit" target="_blank">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </a>
+                    <?php endif; ?>
                     <a href="?storage=<?= $storageId ?>&path=<?= urlencode($curPath) ?>&download=<?= $encName ?>"
                        class="btn btn-sm btn-light" title="Download">
                         <i class="fa-solid fa-download"></i>

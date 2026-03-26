@@ -1,0 +1,72 @@
+version: '3.8'
+
+# BKTDrive — Local Development Stack
+# Jalankan: docker-compose -f docker-compose.local.yml up -d --build
+# Setup DB:  buka http://localhost:8090/setup.php (hapus setelah selesai)
+# OnlyOffice membutuhkan ~2GB RAM — pastikan Docker Desktop diberi cukup memori
+
+services:
+
+  # ── MariaDB (lokal) ─────────────────────────────────────────────────────
+  mariadb:
+    image: mariadb:10.11
+    container_name: bktdrive_db_local
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE:      bktdrive
+      MYSQL_USER:          bktdrive
+      MYSQL_PASSWORD:      bktdrive
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - bktdrive_local
+
+  # ── OnlyOffice Document Server ───────────────────────────────────────────
+  onlyoffice:
+    image: onlyoffice/documentserver
+    container_name: bktdrive_onlyoffice
+    restart: unless-stopped
+    ports:
+      - "7400:80"
+    environment:
+      JWT_ENABLED:  "true"
+      JWT_SECRET:   "local-dev-secret"
+    networks:
+      - bktdrive_local
+
+  # ── Aplikasi PHP ─────────────────────────────────────────────────────────
+  app:
+    build: .
+    container_name: bktdrive_app_local
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+    volumes:
+      - .:/var/www/html          # bind-mount source so PHP changes are instant
+      - app_storage:/var/www/html/storage
+    environment:
+      DB_HOST:               mariadb
+      DB_NAME:               bktdrive
+      DB_USER:               bktdrive
+      DB_PASS:               bktdrive
+      APP_NAME:              BKTDrive
+      APP_URL:               http://localhost:8090
+      # APP_INTERNAL_URL dipakai oleh OnlyOffice untuk fetch/save file dari dalam Docker network
+      APP_INTERNAL_URL:      http://app
+      ONLYOFFICE_ENABLED:    "true"
+      ONLYOFFICE_SERVER:     http://localhost:7400
+      ONLYOFFICE_JWT_SECRET: "local-dev-secret"
+    depends_on:
+      - mariadb
+      - onlyoffice
+    networks:
+      - bktdrive_local
+
+networks:
+  bktdrive_local:
+    driver: bridge
+
+volumes:
+  app_storage:
+  db_data:
